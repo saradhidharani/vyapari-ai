@@ -54,7 +54,7 @@ Sign-up, the code step for existing accounts, password reset, and invitation acc
 | Variable | Purpose |
 | --- | --- |
 | `VYAPARI_SECRET_KEY` | At least 32 random characters. Codes and rate-limit records are keyed with it. Required in production. Without it, a temporary key is used and outstanding codes stop working when the server restarts. |
-| `VYAPARI_EMAIL_PROVIDER` | `smtp` for real email. `dev_file` writes messages to `VYAPARI_DEV_OUTBOX` for local testing only. `fake` is for automated tests only. Unset means code requests fail with "Email delivery is not configured". |
+| `VYAPARI_EMAIL_PROVIDER` | `brevo` sends through Brevo's HTTPS email API. Use it on hosts that block SMTP, such as Railway's Trial and Hobby plans. It needs `VYAPARI_BREVO_API_KEY` and a `VYAPARI_EMAIL_FROM` address that is a verified sender in Brevo. `smtp` for real email through a mail server. `dev_file` writes messages to `VYAPARI_DEV_OUTBOX` for local testing only. `fake` is for automated tests only. Unset means code requests fail with "Email delivery is not configured". |
 | `VYAPARI_SMTP_HOST`, `VYAPARI_SMTP_PORT` (default `587`), `VYAPARI_SMTP_USERNAME`, `VYAPARI_SMTP_PASSWORD`, `VYAPARI_EMAIL_FROM` | Your mailbox or email service's SMTP settings. `VYAPARI_SMTP_SECURITY` is `starttls` (default) or `ssl`. |
 | `VYAPARI_ENV` | Set to `production` on the public server. Startup then fails unless SMTP and a secret key are configured, and the `fake` and `dev_file` providers are refused. |
 

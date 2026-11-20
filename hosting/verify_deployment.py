@@ -135,7 +135,14 @@ def main():
                 page.screenshot(path=str(shots / "2-new-order.png"))
             form.get_by_role("button", name="Save order").click()
             form.wait_for(state="detached", timeout=30_000)
+            # The product list refreshes after the order saves; allow for a slower remote API.
             stock_after = product_stock(page, PRODUCT)
+            for _ in range(10):
+                if stock_after == stock_before - 1:
+                    break
+                page.wait_for_timeout(1500)
+                page.get_by_role("button", name="Orders").click()
+                stock_after = product_stock(page, PRODUCT)
             check(f"paid order deducts stock ({stock_before} → {stock_after})", stock_after == stock_before - 1)
 
             board = dashboard(page)
