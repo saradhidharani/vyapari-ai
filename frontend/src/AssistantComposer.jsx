@@ -21,6 +21,9 @@ export default function AssistantComposer({
   message, setMessage, disabled, onSubmit, onStartDictation, onListeningChange,
 }) {
   const Recognition = getLocalRecognition(window);
+  // Opt-in fallback: the browser's own speech service (supports Hindi and Telugu in Chrome and Edge).
+  const CloudRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const [cloud, setCloud] = useState(false);
   const [locale, setLocale] = useState("en-IN");
   const [capability, setCapability] = useState(null);
   const [attempt, setAttempt] = useState(0);
@@ -103,7 +106,8 @@ export default function AssistantComposer({
       }
       return;
     }
-    if (!Recognition || availability !== "available" || disabled) return;
+    const useCloud = cloud && Boolean(CloudRecognition);
+    if ((!useCloud && (!Recognition || availability !== "available")) || disabled) return;
 
     setError("");
     let recognition;
@@ -116,7 +120,14 @@ export default function AssistantComposer({
       if (message) setError(message);
     }
     try {
-      recognition = createLocalRecognition(Recognition, capability.locale);
+      if (useCloud) {
+        recognition = new CloudRecognition();
+        recognition.lang = locale;
+        recognition.continuous = false;
+        recognition.interimResults = false;
+      } else {
+        recognition = createLocalRecognition(Recognition, capability.locale);
+      }
       currentRecognition.current = recognition;
       recognition.onresult = (event) => {
         if (currentRecognition.current !== recognition) return;
@@ -141,8 +152,10 @@ export default function AssistantComposer({
   }
 
   const canInstall = availability === "downloadable" && typeof Recognition?.install === "function";
-  const canRecord = availability === "available";
+  const canRecord = (cloud && Boolean(CloudRecognition)) || availability === "available";
   const voiceNotice = !secureContext ? "Open Vyapari AI at http://localhost:5173 or over HTTPS to use the microphone."
+    : cloud && CloudRecognition ? (recording === "listening" ? "Listening…" : recording === "stopping" ? "Finishing dictation…"
+      : "Cloud speech is on: your browser sends the audio to its speech service to recognise it.")
     : !Recognition ? "This browser does not expose on-device dictation. You can still type your question."
     : recording === "listening" ? "Listening on this device…"
     : recording === "stopping" ? "Finishing dictation…"
@@ -189,7 +202,7 @@ export default function AssistantComposer({
         </button>
       </form>
       <div className="dictation-controls">
-        {Recognition && secureContext && (
+        {(Recognition || CloudRecognition) && secureContext && (
           <label>
             Dictation language
             <select value={locale} disabled={disabled || installing || Boolean(recording)} onChange={(event) => {
@@ -201,7 +214,14 @@ export default function AssistantComposer({
             </select>
           </label>
         )}
-        {canInstall && (
+        {CloudRecognition && secureContext && (
+          <label>
+            <input type="checkbox" checked={cloud} disabled={disabled || Boolean(recording)}
+              onChange={(event) => { setCloud(event.target.checked); setError(""); }} />
+            {" "}Use browser cloud speech (Hindi, Telugu)
+          </label>
+        )}
+        {canInstall && !cloud && (
           <button className="secondary" type="button" disabled={disabled || installing} onClick={installLanguage}>
             Install language
           </button>
