@@ -1,0 +1,11 @@
+{
+  "name": "vyapari-ai-hosting",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": "22.x" },
+  "scripts": {
+    "build": "npm --prefix frontend ci --omit=dev && npm --prefix frontend run build",
+    "start": "node hosting/server.mjs"
+  }
+}

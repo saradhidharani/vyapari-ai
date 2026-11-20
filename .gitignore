@@ -1,0 +1,18 @@
+node_modules/
+dist/
+.venv/
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+.DS_Store
+backend/vyapari.db
+backend/vyapari.db-*
+# Never commit databases, backups, deployment bundles, or code outboxes.
+*.db
+*.db-*
+*.sqlite3
+*.zip
+*.jsonl
+.pytest_cache/
