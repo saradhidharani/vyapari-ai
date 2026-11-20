@@ -4,6 +4,10 @@ The provider is chosen with VYAPARI_EMAIL_PROVIDER:
 - "smtp": real delivery. Needs VYAPARI_SMTP_HOST, VYAPARI_SMTP_PORT (default 587),
   VYAPARI_SMTP_USERNAME, VYAPARI_SMTP_PASSWORD, VYAPARI_EMAIL_FROM, and optionally
   VYAPARI_SMTP_SECURITY ("starttls", the default, or "ssl").
+- "brevo": real delivery through Brevo's HTTPS email API, for hosts that block
+  outbound SMTP (such as Railway's Trial and Hobby plans). Needs
+  VYAPARI_BREVO_API_KEY and VYAPARI_EMAIL_FROM, where the From address is a sender
+  verified in Brevo.
 - "fake": keeps messages in memory for automated tests. Never use in production.
 - "dev_file": appends messages to VYAPARI_DEV_OUTBOX for local manual testing.
   Refused when VYAPARI_ENV=production.
@@ -19,7 +23,12 @@ import ssl
 import threading
 import time
 from email.message import EmailMessage
+from email.utils import parseaddr
 from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+BREVO_SEND_URL = "https://api.brevo.com/v3/smtp/email"
 
 
 logger = logging.getLogger("vyapari.notifications")
@@ -92,18 +101,47 @@ def _dev_file_send(to, subject, body):
         outbox.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def _brevo_send(to, subject, body):
+    api_key = os.getenv("VYAPARI_BREVO_API_KEY", "")
+    name, address = parseaddr(os.getenv("VYAPARI_EMAIL_FROM", ""))
+    if not api_key or "@" not in address:
+        raise DeliveryError("Brevo is not fully configured")
+    sender = {"email": address, **({"name": name} if name else {})}
+    payload = json.dumps({
+        "sender": sender, "to": [{"email": to}], "subject": subject, "textContent": body,
+    }).encode("utf-8")
+    request = Request(BREVO_SEND_URL, data=payload, method="POST", headers={
+        "accept": "application/json", "content-type": "application/json", "api-key": api_key,
+    })
+    try:
+        with urlopen(request, timeout=20) as response:
+            response.read()
+    except HTTPError as error:
+        # Log the status only. The response body can echo the request, which holds the code.
+        logger.warning("Brevo delivery failed: HTTP %s", error.code)
+        raise DeliveryError("Email delivery failed") from None
+    except (URLError, OSError) as error:
+        logger.warning("Brevo delivery failed: %s", type(error).__name__)
+        raise DeliveryError("Email delivery failed") from None
+
+
 def email_provider():
     return os.getenv("VYAPARI_EMAIL_PROVIDER", "").strip().lower()
+
+
+REAL_PROVIDERS = ("smtp", "brevo")
 
 
 def check_email_configuration():
     """Fail fast at startup when production would be unable to send codes."""
     provider = email_provider()
-    if production() and provider != "smtp":
-        raise RuntimeError("Production requires VYAPARI_EMAIL_PROVIDER=smtp")
+    if production() and provider not in REAL_PROVIDERS:
+        raise RuntimeError("Production requires VYAPARI_EMAIL_PROVIDER=smtp or brevo")
     if provider == "smtp" and not (os.getenv("VYAPARI_SMTP_HOST") and os.getenv("VYAPARI_EMAIL_FROM")):
         raise RuntimeError("VYAPARI_EMAIL_PROVIDER=smtp needs VYAPARI_SMTP_HOST and VYAPARI_EMAIL_FROM")
-    if provider not in ("", "smtp", "fake", "dev_file"):
+    if provider == "brevo" and not (os.getenv("VYAPARI_BREVO_API_KEY") and "@" in os.getenv("VYAPARI_EMAIL_FROM", "")):
+        raise RuntimeError("VYAPARI_EMAIL_PROVIDER=brevo needs VYAPARI_BREVO_API_KEY and VYAPARI_EMAIL_FROM")
+    if provider not in ("", "fake", "dev_file", *REAL_PROVIDERS):
         raise RuntimeError(f"Unknown VYAPARI_EMAIL_PROVIDER: {provider}")
 
 
@@ -111,6 +149,8 @@ def send_email(to, subject, body):
     provider = email_provider()
     if provider == "smtp":
         _smtp_send(to, subject, body)
+    elif provider == "brevo":
+        _brevo_send(to, subject, body)
     elif provider == "fake":
         if production():
             raise DeliveryError("The fake email provider is disabled in production")

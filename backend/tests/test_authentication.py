@@ -423,3 +423,53 @@ def test_forwarded_visitor_address_is_trusted_only_with_the_proxy_key(monkeypatc
     assert verification.client_ip(request({**forwarded, "x-vyapari-client-ip": "not-an-ip"})) == "10.0.0.5"
     monkeypatch.setenv("VYAPARI_PROXY_KEY", "short")
     assert verification.client_ip(request(forwarded)) == "10.0.0.5"
+
+
+def test_brevo_provider_sends_over_https_without_leaking_codes(monkeypatch, caplog):
+    import io
+    import json as jsonlib
+    from urllib.error import HTTPError
+    import notifications
+    captured = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def read(self):
+            return b'{"messageId":"<id>"}'
+
+    def fake_urlopen(request, timeout):
+        captured["url"], captured["timeout"] = request.full_url, timeout
+        captured["headers"] = {k.lower(): v for k, v in request.header_items()}
+        captured["payload"] = jsonlib.loads(request.data)
+        return Response()
+
+    monkeypatch.setattr(notifications, "urlopen", fake_urlopen)
+    monkeypatch.setenv("VYAPARI_EMAIL_PROVIDER", "brevo")
+    monkeypatch.setenv("VYAPARI_BREVO_API_KEY", "xkeysib-test-key")
+    monkeypatch.setenv("VYAPARI_EMAIL_FROM", "Vyapari AI <sender@example.test>")
+    monkeypatch.setenv("VYAPARI_ENV", "production")
+    notifications.check_email_configuration()  # brevo is a real provider in production
+    notifications.send_email("owner@example.test", "Your code", "Your code is 123456")
+    assert captured["url"] == "https://api.brevo.com/v3/smtp/email"
+    assert captured["headers"]["api-key"] == "xkeysib-test-key"
+    assert captured["payload"] == {
+        "sender": {"email": "sender@example.test", "name": "Vyapari AI"},
+        "to": [{"email": "owner@example.test"}], "subject": "Your code", "textContent": "Your code is 123456",
+    }
+
+    def rejecting_urlopen(request, timeout):
+        raise HTTPError(request.full_url, 400, "Bad Request", {}, io.BytesIO(b'{"message":"Your code is 654321"}'))
+
+    monkeypatch.setattr(notifications, "urlopen", rejecting_urlopen)
+    caplog.set_level(logging.DEBUG)
+    with pytest.raises(notifications.DeliveryError) as failure:
+        notifications.send_email("owner@example.test", "Your code", "Your code is 654321")
+    for text in (str(failure.value), caplog.text):
+        assert "654321" not in text and "xkeysib-test-key" not in text
+
+    monkeypatch.delenv("VYAPARI_BREVO_API_KEY")
+    with pytest.raises(RuntimeError):
+        notifications.check_email_configuration()
